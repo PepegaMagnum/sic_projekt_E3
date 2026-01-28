@@ -60,6 +60,28 @@ uint16_t calcCRC16(DataFrame_t payload){
   return tmp;
 }
 
+int readColor(int s2State, int s3State)
+{
+  digitalWrite(S2, s2State);
+  digitalWrite(S3, s3State);
+  delay(5);
+
+  long pulse = pulseIn(SENSOR_OUT, LOW, 25000);
+  if (pulse == 0) return 0;
+
+  int value = map(pulse, 20, 600, 255, 0);
+  return constrain(value, 0, 255);
+}
+
+uint16_t readPackedColor()
+{
+  int r = readColor(LOW, LOW);
+  int g = readColor(HIGH, HIGH);
+  int b = readColor(LOW, HIGH);
+
+  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
 void setup() {
   Serial.begin(9600);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -91,7 +113,7 @@ void loop() {
   // Prepare packet
   packet.payload.messageId = msgID;
   packet.payload.senderId = MY_NODE_ID;
-  packet.payload.data = (uint8_t) random(6000, 7000);
+  packet.payload.data = readPackedColor();
   setBit(&packet.payload.path, MY_NODE_ID);
   packet.crc = calcCRC16(packet.payload);
 
