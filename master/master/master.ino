@@ -9,7 +9,7 @@
 #define ID_W5 5
 #define ID_W0 6
 
-const uint8_t MY_NODE_ID = ID_W2;
+const uint8_t MY_NODE_ID = ID_W0;
 
 #define S0 4
 #define S1 5
@@ -22,6 +22,10 @@ const unsigned long DELAY = 500; // ms
 const unsigned long TRANSMISSION_DELAY = 70; // ms
 const uint8_t       CNT_RESET_VALUE = (1000/DELAY)*10;
 const bool          DEBUG = false;
+
+unsigned long lastSeen [6];
+unsigned long now;
+bool active[6];
 
 typedef struct DataFrame {
   uint8_t messageId;
@@ -36,10 +40,9 @@ typedef struct Packet {
 } Packet_t;
 
 Packet_t packet;
-int idleCnt = 0;
-uint16_t rcvCrc;
-uint8_t msgID = 0;
+Packet_t packet_copy;
 
+uint16_t rcvCrc;
 uint8_t buffer[7];
 
 void setBit(uint8_t* value, uint8_t bitIndex){
@@ -82,32 +85,6 @@ void setup() {
 
 }
 
-void transmitPacket(Packet_t packet, bool debug){
-  if (debug){
-    Serial.println("Payload to be sent: ");
-    Serial.print("MsgId: ");
-    Serial.println(packet.payload.messageId);
-    Serial.print("SenderId: ");
-    Serial.println(packet.payload.senderId);
-    Serial.print("Path: ");
-    Serial.println(packet.payload.path, BIN);
-    Serial.print("Data: ");
-    Serial.println(packet.payload.data);
-    Serial.print("CRC: ");
-    Serial.println(packet.crc, BIN);
-  }
-
-  LoRa.beginPacket();
-  LoRa.write(packet.payload.messageId);
-  LoRa.write(packet.payload.senderId);
-  LoRa.write(packet.payload.path);
-  LoRa.write(highByte(packet.payload.data));
-  LoRa.write(lowByte(packet.payload.data));
-  LoRa.write(highByte(packet.crc));
-  LoRa.write(lowByte(packet.crc));
-  LoRa.endPacket();
-}
-
 void loop() {
   int packetSize = LoRa.parsePacket();
   // Serial.println("PacketSize:");
@@ -135,18 +112,6 @@ void loop() {
     packet.payload.data = (buffer[3] << 8) | buffer[2];
     packet.crc = (buffer[1] << 8) | buffer[0];
 
-    Serial.println("Payload: ");
-    Serial.print("MsgId: ");
-    Serial.println(packet.payload.messageId);
-    Serial.print("SenderId: ");
-    Serial.println(packet.payload.senderId);
-    Serial.print("Path: ");
-    Serial.println(packet.payload.path, BIN);
-    Serial.print("Data: ");
-    Serial.println(packet.payload.data);
-    Serial.print("CRC: ");
-    Serial.println(packet.crc, BIN);
-
     rcvCrc = calcCRC16(packet.payload);
 
     if (rcvCrc == packet.crc){
@@ -156,33 +121,73 @@ void loop() {
       
       if (bitRead(packet.payload.path, MY_NODE_ID) == 1){
         Serial.println("This message has been here, dropping packet");
-        idleCnt++;
+      }
+      else if ((packet.payload.messageId = packet_copy.payload.messageId) and (packet.payload.senderId == packet_copy.payload.senderId)){
+        Serial.println("Duplicate message");
       } else {
-        Serial.println("Resending packet: ");
-        packet.crc = 0;
-        bitSet(packet.payload.path, MY_NODE_ID);
-        packet.crc = calcCRC16(packet.payload);
+        Serial.println("Payload: ");
+        Serial.print("MsgId: ");
+        Serial.println(packet.payload.messageId);
+        Serial.print("SenderId: ");
+        Serial.println(packet.payload.senderId);
+        Serial.print("Path: ");
+        Serial.println(packet.payload.path, BIN);
+        Serial.print("Data: ");
+        Serial.println(packet.payload.data);
+        Serial.print("CRC: ");
+        Serial.println(packet.crc, BIN);
 
-        delay(MY_NODE_ID*TRANSMISSION_DELAY);
-        transmitPacket(packet, true);
-        idleCnt = 0;
+        for (int i=0; i < 5; i++){
+          if (bitRead(packet.payload.path, i) == 1) {
+            lastSeen[i] = millis();
+          }
+        }
+    
+        packet_copy = packet;
+        memset(&packet, 0, sizeof(Packet_t));
       }
       memset(&packet, 0, sizeof(Packet_t));
 
+    } 
+    // else {
+    //   Serial.println("Received CRC is not equal to calculated CRC");
+    //   Serial.print("Received CRC:   "); 
+    //   Serial.println(packet.crc, BIN);
+
+    //   Serial.print("Calculated CRC: ");
+    //   Serial.println(rcvCrc, BIN);
+    //   idleCnt++;
+
+    // }
+    // memset(&buffer, 0, sizeof(buffer));
+  } 
+  now = millis();
+  for (int i; i<5; i++){
+    if((now-lastSeen[i]) > 10000){
+      active[i] = false;
     } else {
-      Serial.println("Received CRC is not equal to calculated CRC");
-      Serial.print("Received CRC:   "); 
-      Serial.println(packet.crc, BIN);
-
-      Serial.print("Calculated CRC: ");
-      Serial.println(rcvCrc, BIN);
-      idleCnt++;
-
+      active[i] = true;
     }
-    memset(&buffer, 0, sizeof(buffer));
-  } else {
-    Serial.println("No packet received");
   }
+  Serial.println("Network Status: ");
+  Serial.print("S0: ");
+  if (active[0] == 1){
+    Serial.println("active");
+  } else {
+    Serial.println("not active");
+  }
+
+  for (int i = 1; i < 6; i++){
+    Serial.print("W");
+    Serial.print(i);
+    Serial.print(": ");
+    if (active[i] == 1){
+      Serial.println("Active");
+    } else {
+      Serial.println("Not Active");
+    }
+  }
+
   memset(&packet, 0, sizeof(Packet_t));
-  delay(100);
+  delay(TRANSMISSION_DELAY);
 }
